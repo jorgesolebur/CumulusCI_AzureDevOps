@@ -1,33 +1,34 @@
 from functools import lru_cache
-from typing import List, Optional, Type
+from typing import TYPE_CHECKING, List, Optional, Type
 
 import requests
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsAuthenticationError
 from cumulusci.core.config import BaseProjectConfig, ServiceConfig
-from cumulusci.tasks.github.util import CommitDir
 from cumulusci.vcs.base import VCSService
 from msrest.authentication import BasicAuthentication
 
 from cumulusci_ado.utils.ado import parse_repo_url
-from cumulusci_ado.vcs.ado import ADORelease, ADORepository
-from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import ADODynamicDependency
-from cumulusci_ado.vcs.ado.generator import (
-    ADOParentPullRequestNotesGenerator,
-    ADOReleaseNotesGenerator,
-)
+
+if TYPE_CHECKING:
+    from cumulusci_ado.vcs.ado import ADORelease, ADORepository
+    from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import ADODynamicDependency
+    from cumulusci_ado.vcs.ado.generator import (
+        ADOParentPullRequestNotesGenerator,
+        ADOReleaseNotesGenerator,
+    )
 
 
 @lru_cache(50)
 def get_ado_service_for_url(project_config, url: str) -> Optional["AzureDevOpsService"]:
-    from cumulusci_ado.vcs.ado.service import AzureDevOpsService
-
+    # Note: This function is defined after the class, so we need to access it dynamically
+    # to avoid circular import issues
     return AzureDevOpsService.get_service_for_url(project_config, url)
 
 
 class AzureDevOpsService(VCSService):
     service_type: str = "azure_devops"
-    _repo: Optional[ADORepository]
+    _repo: Optional["ADORepository"]
 
     def __init__(self, config: BaseProjectConfig, name: Optional[str] = None, **kwargs):
         """Initializes the ADO service with the given project configuration.
@@ -144,13 +145,19 @@ class AzureDevOpsService(VCSService):
         return vcs_service
 
     @property
-    def dynamic_dependency_class(self) -> Type[ADODynamicDependency]:
+    def dynamic_dependency_class(self) -> Type["ADODynamicDependency"]:
         """Returns the dynamic dependency class for the Azure DevOps service."""
+        from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import (
+            ADODynamicDependency,
+        )
+
         return ADODynamicDependency
 
-    def get_repository(self, options: dict = {}) -> Optional[ADORepository]:
+    def get_repository(self, options: dict = {}) -> Optional["ADORepository"]:
         """Returns the Azure DevOps repository."""
         if self._repo is None:
+            from cumulusci_ado.vcs.ado import ADORepository
+
             self._repo = ADORepository(
                 self.connection,
                 self.config,
@@ -166,13 +173,14 @@ class AzureDevOpsService(VCSService):
         owner, repo_name, host, project = parse_repo_url(self.repo_url)
         return [host or "", owner or "", repo_name or "", project or ""]
 
-    def get_committer(self, repo: ADORepository) -> CommitDir:
+    def get_committer(self, repo: "ADORepository"):
         """Returns the committer for the Azure DevOps repository."""
-        # TODO: Implement the committer logic
+        from cumulusci.tasks.github.util import CommitDir
+
         return CommitDir(repo.repo, logger=self.logger)
 
     def markdown(
-        self, release: ADORelease, mode: str = "gfm", context: str = ""
+        self, release: "ADORelease", mode: str = "gfm", context: str = ""
     ) -> str:
         """Converts the given text to Azure DevOps-flavored Markdown."""
         release_html = ""
@@ -184,7 +192,9 @@ class AzureDevOpsService(VCSService):
         # )
         return release_html
 
-    def release_notes_generator(self, options: dict) -> ADOReleaseNotesGenerator:
+    def release_notes_generator(self, options: dict) -> "ADOReleaseNotesGenerator":
+        from cumulusci_ado.vcs.ado.generator import ADOReleaseNotesGenerator
+
         github_info = {
             "github_owner": self.config.repo_owner,
             "github_repo": self.config.repo_name,
@@ -216,9 +226,11 @@ class AzureDevOpsService(VCSService):
         return generator
 
     def parent_pr_notes_generator(
-        self, repo: ADORepository
-    ) -> ADOParentPullRequestNotesGenerator:
+        self, repo: "ADORepository"
+    ) -> "ADOParentPullRequestNotesGenerator":
         """Returns the parent pull request notes generator for the ADO repository."""
+        from cumulusci_ado.vcs.ado.generator import ADOParentPullRequestNotesGenerator
+
         # TODO: Implement the parent PR notes generator logic
         return ADOParentPullRequestNotesGenerator(
             self.core_client, repo.repo, self.config

@@ -18,7 +18,7 @@ from cumulusci_ado.utils.ado import parse_repo_url
 from cumulusci_ado.vcs.ado.adapter import ADORepository
 from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cumulusci_ado")
 
 VCS_ADO = "azure_devops"
 

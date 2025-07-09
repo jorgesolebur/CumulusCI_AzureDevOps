@@ -1,4 +1,4 @@
-name: Publish and release cumulusci-azure-devops
+name: Publish and release cumulusci-plus-azure-devops
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install build tools
         run: pip install hatch
       - name: Build package
@@ -27,4 +27,5 @@ jobs:
         env:
           HATCH_INDEX_USER: "__token__"
           HATCH_INDEX_AUTH: ${{ secrets.PYPI_TOKEN }}
+          # HATCH_INDEX_REPO: ${{ vars.PYPI_REPO }} # Uncomment if you have a specific repository
         run: hatch publish

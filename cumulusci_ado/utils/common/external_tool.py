@@ -13,7 +13,7 @@ import sys
 from cumulusci.core.exceptions import CumulusCIFailure
 from humanfriendly.terminal.spinners import Spinner
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cumulusci_ado")
 
 
 class ExternalToolInvoker:

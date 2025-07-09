@@ -3,33 +3,41 @@ requires = ["hatchling", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cumulusci-azure-devops"
+name = "cumulusci-plus-azure-devops"
 dynamic = ["version", "readme"]
-description = "A plugin for cumulusci supporting Azure DevOps"
-license = { text = "BSD 3-Clause License" }
+description = "A plugin for cumulusci plus supporting Azure DevOps"
+license = { text = "GNU General Public License v3.0" }
 authors = [{name = "Rupesh J"}]
 requires-python = ">=3.11"
+keywords = ["cumulusci", "salesforce", "azure devops"]
 dependencies = [
-    "cumulusci>=5.0.0.dev0",
+    "cumulusci-plus>=5.0.0",
     "azure-devops",
     "requests",
     "humanfriendly",
     "distro",
     "packaging>=23.0"
 ]
+# These dependencies are automatically installed when using pip or pipx
+# For conflict prevention, see install.py script and INSTALLATION.md
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: BSD License",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 [project.urls]
-Homepage = "https://github.com/your-org/CumulusCI_AzureDevOps"
-"Bug Tracker" = "https://github.com/your-org/CumulusCI_AzureDevOps/issues"
+Homepage = "https://github.com/jorgesolebur/CumulusCI_AzureDevOps"
+"Bug Tracker" = "https://github.com/jorgesolebur/CumulusCI_AzureDevOps/issues"
 
 [project.entry-points."cumulusci.plugins"]
 azure_devops = "cumulusci_ado.azure_devops:AzureDevOpsPlugin"
+
+[project.scripts]
+cumulusci-ado = "cumulusci_ado.cli.ado:main"
+cci-ado = "cumulusci_ado.cli.ado:main"
 
 [tool.hatch.version]
 path = "cumulusci_ado/__about__.py"

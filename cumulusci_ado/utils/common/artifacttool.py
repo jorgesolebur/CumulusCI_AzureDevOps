@@ -4,7 +4,7 @@ import os
 
 ARTIFACTTOOL_PAT_ENVKEY = "AZURE_DEVOPS_EXT_ARTIFACTTOOL_PATVAR"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cumulusci_ado")
 
 
 class ArtifactToolInvoker:

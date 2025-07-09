@@ -2,8 +2,7 @@
 plugins:
   azure_devops:
     # Azure DevOps Plugin Configuration
-    name: Azure DevOps Plugin
-    version: 1.0
+    name: CumulusCI Plus Azure DevOps
     description: Plugin for Azure DevOps integration
     author: Rupesh J
 

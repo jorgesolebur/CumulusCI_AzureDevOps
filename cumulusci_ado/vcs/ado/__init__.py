@@ -8,10 +8,8 @@ from cumulusci_ado.vcs.ado.adapter import (
     ADORepository,
     ADOTag,
 )
-from cumulusci_ado.vcs.ado.service import AzureDevOpsService
 
 __all__ = (
-    "AzureDevOpsService",
     "ADORepository",
     "ADORef",
     "ADOTag",

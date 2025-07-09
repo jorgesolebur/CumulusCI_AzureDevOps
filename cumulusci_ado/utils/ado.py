@@ -13,6 +13,7 @@ except ImportError:
 
 from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.exceptions import CumulusCIFailure
+from cumulusci.utils import CUMULUSCI_PATH
 from cumulusci.utils.git import EMPTY_URL_MESSAGE
 
 from cumulusci_ado.utils.common.artifacttool import ArtifactToolInvoker
@@ -21,7 +22,10 @@ from cumulusci_ado.utils.common.external_tool import (
     ProgressReportingExternalToolInvoker,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cumulusci_ado")
+
+PIP_UPDATE_CMD = "pip install --upgrade cumulusci-plus-azure-devops"
+PIPX_UPDATE_CMD = "pipx upgrade cumulusci-plus-azure-devops"
 
 
 def parse_repo_url(
@@ -203,3 +207,7 @@ def sanitize_path_name(path_name: str) -> str:
         path_name = path_name[len("refs/heads/") :]
 
     return path_name
+
+
+def get_ado_cci_plus_upgrade_command():
+    return PIPX_UPDATE_CMD if "pipx" in CUMULUSCI_PATH.lower() else PIP_UPDATE_CMD

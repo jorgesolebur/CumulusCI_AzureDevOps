@@ -1,6 +1,12 @@
+from importlib.metadata import PackageNotFoundError, version
+
+from cumulusci.cli.utils import check_latest_version, parse_version
 from cumulusci.core.utils import import_global
 from cumulusci.plugins.plugin_base import PluginBase
 from cumulusci.vcs.vcs_source import VCSSource
+
+from cumulusci_ado import __version__
+from cumulusci_ado.utils.ado import get_ado_cci_plus_upgrade_command
 
 import_global("cumulusci_ado.vcs.ado.service.AzureDevOpsService")
 
@@ -23,13 +29,29 @@ class AzureDevOpsPlugin(PluginBase):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._api_name = "cumulusci-plus-azure-devops"
+
+    @property
+    def version(self) -> str:
+        """Returns the version of the plugin."""
+        try:
+            return version(self._api_name)
+        except PackageNotFoundError:
+            return "0.0.0"
 
     def initialize(self) -> None:
         """Initialize the plugin."""
         super().initialize()
-        # Add any additional initialization here
 
     def teardown(self) -> None:
         """Tear down the plugin."""
         super().teardown()
-        # Add any additional cleanup here
+
+    def check_latest_version(self):
+        """Override this method to check for the latest version of the plugin."""
+        check_latest_version(
+            pkg=self._api_name,
+            installed_version=parse_version(__version__),
+            tstamp_file="cumulus_ado_timestamp",
+            message=f"An update to {self.name} is available. To install the update, run this command: {get_ado_cci_plus_upgrade_command()}",
+        )
