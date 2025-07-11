@@ -732,14 +732,9 @@ class ADORepository(AbstractRepo):
 
     @property
     def feed_name(self) -> str:
-        if self.organisation_artifact:
-            fname: str = self.project_config.project__custom__ado_feedname or str(
-                self.config("feed_name")
-            )
-        else:
-            fname: str = self.project_config.project__custom__ado_feedname or str(
-                self.config("feed_name")
-            )
+        fname: str = self.project_config.project__custom__ado_feedname or str(
+            self.config("feed_name")
+        )
         return fname.replace(" ", "-").lower()
 
     @property
@@ -1109,9 +1104,12 @@ class ADORepository(AbstractRepo):
     def publish_repo_package(self, feed, tag_name: str, description: str) -> None:
         """Publishes a package to the given feed."""
         repo_root = self.project_config.repo_root or "."
-        force_app_path = os.path.join(repo_root, "force-app")
-        if not os.path.exists(force_app_path):
-            force_app_path = repo_root
+        artifact_path = os.path.join(
+            repo_root, str(self.config("artifact_folder_path") or "")
+        )
+
+        if not os.path.exists(artifact_path):
+            artifact_path = repo_root
 
         ctool = self.connection.get_client(
             "cumulusci_ado.utils.common.client_tool.client_tool_client.ClientToolClient"
@@ -1122,7 +1120,7 @@ class ADORepository(AbstractRepo):
             feed.id,
             self.package_name,
             tag_name,
-            force_app_path,
+            artifact_path,
             description=description,
             scope=("organization" if self.organisation_artifact else "project"),
             organization=f"https://{self._service_config.url if self._service_config else ''}",
@@ -1132,16 +1130,8 @@ class ADORepository(AbstractRepo):
 
         return ret
 
-    def create_release(
-        self,
-        tag_name: str,
-        name: str = "",
-        body: str = "",
-        draft: bool = False,
-        prerelease: bool = False,
-        options: dict = {},
-    ) -> ADORelease:
-        """Creates a release on the given repository."""
+    def get_feed(self) -> Feed:
+        """Fetches the feed for the given repository."""
         try:
             feed: Feed = self.feed_client.get_feed(
                 self.feed_name,
@@ -1153,31 +1143,40 @@ class ADORepository(AbstractRepo):
                 feed_instance,
                 project=(None if self.organisation_artifact else self.project_id),
             )
+        return feed
+
+    def create_release(
+        self,
+        tag_name: str,
+        name: str = "",
+        body: str = "",
+        draft: bool = False,
+        prerelease: bool = False,
+        options: dict = {},
+    ) -> ADORelease:
+        """Creates a release on the given repository."""
+
+        feed: Feed = self.get_feed()
 
         try:
             numeric_part = custom_to_semver(tag_name, self.project_config)
 
             version, pkg = self.get_version_package(tag_name)
 
+            description = {"tag_name": tag_name}
+
+            if options.get("version_id"):
+                description["version_id"] = options["version_id"]
+
             if version is None:
                 self.publish_repo_package(
                     feed,
                     numeric_part,
-                    description=json.dumps({"tag_name": tag_name, "body": body}),
+                    description=json.dumps(description),
                 )
 
                 self._package = None
                 version, pkg = self.get_version_package(tag_name)
-
-                if pkg and version:
-                    release: PackageVersion = self.feed_client.get_package_version(
-                        feed.id,
-                        pkg.id,
-                        version.id,
-                        project=(
-                            None if self.organisation_artifact else self.project_id
-                        ),
-                    )
 
             if not pkg:
                 raise ADOApiNotFoundError(
@@ -1188,6 +1187,13 @@ class ADORepository(AbstractRepo):
                 raise ADOApiNotFoundError(
                     f"Version {tag_name} not found for package {self.package_name}"
                 )
+
+            release: PackageVersion = self.feed_client.get_package_version(
+                feed.id,
+                pkg.id,
+                version.id,
+                project=(None if self.organisation_artifact else self.project_id),
+            )
 
             if draft:
                 return ADORelease(release=release, tag_name=tag_name)
