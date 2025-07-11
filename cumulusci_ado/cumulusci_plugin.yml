@@ -16,6 +16,7 @@ plugins:
       completion_opts_bypass_reason: Automated bypass for CI/CD pipeline
       organisation_artifact: False # When True artifacts are created at Organisation level otherwise, its project level.
       feed_name: SFCore Packages # Default feed name for salesforce packages
+      artifact_folder_path: # Artifact folder in repo to upload for salesforce packages
 services:
   azure_devops:
     description: Configure connection for Azure DevOps Server
