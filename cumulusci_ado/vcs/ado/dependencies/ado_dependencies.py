@@ -1,4 +1,3 @@
-import copy
 import logging
 from abc import ABC
 from functools import lru_cache
@@ -10,6 +9,7 @@ from cumulusci.core.dependencies.dependencies import (
     add_dependency_pin_class,
 )
 from cumulusci.core.exceptions import DependencyResolutionError
+from cumulusci.core.utils import deep_merge_plugins
 from cumulusci.vcs.bootstrap import get_remote_project_config
 from pydantic import root_validator
 from pydantic.networks import AnyUrl
@@ -21,29 +21,6 @@ from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 logger = logging.getLogger("cumulusci_ado")
 
 VCS_ADO = "azure_devops"
-
-
-def _deep_merge_plugins(remote_plugins, project_plugins):
-    """
-    Deep merge project_plugins into remote_plugins, adding only missing keys.
-    Remote plugins take precedence, project plugins provide defaults for missing keys.
-    """
-    if not isinstance(remote_plugins, dict) or not isinstance(project_plugins, dict):
-        return remote_plugins
-
-    result = remote_plugins.copy()
-
-    for key, value in project_plugins.items():
-        if key not in result:
-            # Key doesn't exist in remote, add it from project
-            result[key] = copy.deepcopy(value)
-        elif isinstance(result[key], dict) and isinstance(value, dict):
-            # Both are dictionaries, recursively merge
-            result[key] = _deep_merge_plugins(result[key], value)
-        # If key exists in remote but types don't match or remote value is not dict,
-        # keep the remote value (remote takes precedence)
-
-    return result
 
 
 @lru_cache(50)
@@ -69,7 +46,7 @@ def get_ado_repo(project_config, url) -> ADORepository:
             remote_config.config["plugins"] = project_config.plugins
         else:
             # Merge project plugins into remote plugins, keeping remote values for existing keys
-            remote_config.config["plugins"] = _deep_merge_plugins(
+            remote_config.config["plugins"] = deep_merge_plugins(
                 remote_config.config["plugins"], project_config.plugins
             )
 
