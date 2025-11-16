@@ -11,8 +11,7 @@ from cumulusci.core.dependencies.dependencies import (
 from cumulusci.core.exceptions import DependencyResolutionError
 from cumulusci.core.utils import deep_merge_plugins
 from cumulusci.vcs.bootstrap import get_remote_project_config
-from pydantic import root_validator
-from pydantic.networks import AnyUrl
+from pydantic.v1 import AnyUrl, root_validator
 
 from cumulusci_ado.utils.ado import parse_repo_url
 from cumulusci_ado.vcs.ado.adapter import ADORepository
