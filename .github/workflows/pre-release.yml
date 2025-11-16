@@ -110,5 +110,5 @@ jobs:
       - name: Call Release Workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: "Publish and release CumulusCI"
+          workflow: "Publish and release CumulusCI_AzureDevOps"
           token: ${{ secrets.GITHUB_TOKEN }}
