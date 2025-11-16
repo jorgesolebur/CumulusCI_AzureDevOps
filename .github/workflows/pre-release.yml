@@ -88,7 +88,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch -c "$BRANCH_NAME"
-          git add docs/history.md cumulusci/__about__.py
+          git add docs/history.md cumulusci_ado/__about__.py
           git commit -m "Update changelog (automated)"
           # Delete the remote branch if it exists, ignoring errors if it doesn't.
           git push origin --delete "$BRANCH_NAME" || true
@@ -110,5 +110,5 @@ jobs:
       - name: Call Release Workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: "Publish and release CumulusCI"
+          workflow: "Publish and release CumulusCI_AzureDevOps"
           token: ${{ secrets.GITHUB_TOKEN }}
