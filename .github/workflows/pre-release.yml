@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: write
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
@@ -56,8 +60,6 @@ jobs:
       - name: Generate release notes
         if: steps.version.outputs.level == 'major' || steps.version.outputs.level == 'minor' || steps.version.outputs.level == 'patch' || steps.version.outputs.level == 'beta'
         id: changelog
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # This will be empty if there are no releases yet
           PREVIOUS_VERSION=$(gh release view --json tagName --jq .tagName 2>/dev/null || echo "")
@@ -95,8 +97,6 @@ jobs:
           # Push the new branch.
           git push origin "$BRANCH_NAME"
       - name: Create and Merge Release PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_URL=$(gh pr create --title "Release v$(hatch version)" --fill --label 'auto-pr')
           if [ -n "$PR_URL" ]; then
@@ -111,4 +111,3 @@ jobs:
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: "Publish and release CumulusCI_AzureDevOps"
-          token: ${{ secrets.GITHUB_TOKEN }}
