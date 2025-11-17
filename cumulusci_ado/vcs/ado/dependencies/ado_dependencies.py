@@ -24,7 +24,9 @@ VCS_ADO = "azure_devops"
 
 @lru_cache(50)
 def get_ado_repo(project_config, url) -> ADORepository:
-    from cumulusci_ado.vcs.ado.service import VCSService, get_ado_service_for_url
+    from cumulusci.vcs.base import VCSService
+
+    from cumulusci_ado.vcs.ado.service import get_ado_service_for_url
 
     vcs_service: Optional[VCSService] = get_ado_service_for_url(project_config, url)
 

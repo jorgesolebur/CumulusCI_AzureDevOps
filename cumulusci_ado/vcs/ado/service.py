@@ -166,7 +166,7 @@ class AzureDevOpsService(VCSService):
                 service_config=self.service_config,
                 options=options,
             )
-            self._repo._init_repo()
+            self._repo._init_repo()  # type: ignore
         return self._repo
 
     def parse_repo_url(self) -> List[str]:
