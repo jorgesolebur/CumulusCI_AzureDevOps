@@ -18,7 +18,3 @@ def main(prev, next):
     )
     print(cmd)
     os.system(cmd)
-
-
-if __name__ == "__main__":
-    main()

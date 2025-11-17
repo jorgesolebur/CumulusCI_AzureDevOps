@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from urllib.parse import ParseResult, urlparse
 
 try:
-    import colorama
+    import colorama  # type: ignore
 except ImportError:
     # coloredlogs only installs colorama on Windows
     pass
