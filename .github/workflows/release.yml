@@ -1,4 +1,4 @@
-name: Publish and release CumulusCI
+name: Publish and release CumulusCI_AzureDevOps
 
 on:
   workflow_dispatch:
