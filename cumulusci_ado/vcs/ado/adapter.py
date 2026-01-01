@@ -780,7 +780,7 @@ class ADORepository(AbstractRepo):
             refs: list[GitRef] = self.git_client.get_refs(
                 self.id,
                 self.project_id,
-                filter=ref_sha,
+                filter=(ref_sha or f"heads/{self.default_branch}"),
                 include_statuses=True,
                 latest_statuses_only=True,
                 peel_tags=True,
