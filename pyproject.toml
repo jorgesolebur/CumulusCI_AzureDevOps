@@ -11,12 +11,13 @@ authors = [{name = "Rupesh J"}]
 requires-python = ">=3.11"
 keywords = ["cumulusci", "salesforce", "azure devops"]
 dependencies = [
-    "cumulusci-plus>=5.0.32",
+    "cumulusci-plus>=5.0.55",
     "azure-devops",
     "requests",
     "humanfriendly",
     "distro",
-    "packaging>=23.0"
+    "packaging>=23.0",
+    "setuptools==81.0.0"
 ]
 # These dependencies are automatically installed when using pip or pipx
 # For conflict prevention, see install.py script and INSTALLATION.md
