@@ -49,6 +49,7 @@ from cumulusci.vcs.models import (
 
 from cumulusci_ado.utils.ado import (
     custom_to_semver,
+    download_package,
     parse_repo_url,
     publish_package,
     sanitize_path_name,
@@ -668,7 +669,10 @@ class ADORepository(AbstractRepo):
 
     def _init_repo(self) -> None:
         """Initializes the repository object."""
+        self.git_client = self.connection.clients.get_git_client()
+
         repo_url = self.options.get("repository_url", self.project_config.repo_url)
+
         if repo_url is not None:
             _repo_owner, _repo_name, _host, _project = parse_repo_url(repo_url)
 
@@ -684,8 +688,6 @@ class ADORepository(AbstractRepo):
             or self.project_config.repo_name
             or ""
         )
-
-        self.git_client = self.connection.clients.get_git_client()
 
         self.repo = self.git_client.get_repository(self.repo_name, _project)
         self.project = self.repo.project if self.repo else None
@@ -1128,6 +1130,27 @@ class ADORepository(AbstractRepo):
             detect=None,
         )
 
+        return ret
+
+    def download_package(self, package_version, path) -> None:
+        """Downloads a package from the given feed."""
+        ctool = self.connection.get_client(
+            "cumulusci_ado.utils.common.client_tool.client_tool_client.ClientToolClient"
+        )
+        numeric_part = custom_to_semver(package_version, self.project_config)
+
+        ret = download_package(
+            ctool,
+            self.feed_name,
+            self.package_name,
+            numeric_part,
+            path,
+            file_filter=None,
+            scope=("organization" if self.organisation_artifact else "project"),
+            organization=f"https://{self._service_config.url if self._service_config else ''}",
+            project=(None if self.organisation_artifact else self.project_id),
+            detect=None,
+        )
         return ret
 
     def get_feed(self) -> Feed:
