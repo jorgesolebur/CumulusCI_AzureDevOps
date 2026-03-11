@@ -112,3 +112,4 @@ jobs:
         with:
           workflow: "Publish and release CumulusCI_AzureDevOps"
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
