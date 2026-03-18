@@ -223,8 +223,10 @@ class ADOBranch(AbstractBranch):
                 self.repo.id, self.name, self.repo.project_id
             )
         except AzureDevOpsServiceError as e:
-            e.message = f"Branch {self.name} not found. {e.message}"
-            raise AzureDevOpsServiceError(e)
+            e.message = (
+                f"Branch {self.name} not found. AzureDevOpsServiceError: {e.message}"
+            )
+            raise ADOApiNotFoundError(e)
 
     @classmethod
     def branches(cls, ado_repo: "ADORepository") -> list["ADOBranch"]:
@@ -251,7 +253,7 @@ class ADOBranch(AbstractBranch):
             ]
         except AzureDevOpsServiceError as e:
             e.message = f"Failed to get branches: {e.message}"
-            raise AzureDevOpsServiceError(e)
+            raise ADOApiNotFoundError(e)
         except Exception as ex:
             message = f"Unexpected error when getting branches: {str(ex)}"
             raise Exception(message)
@@ -321,7 +323,7 @@ class ADOPullRequest(AbstractPullRequest):
             ]
         except AzureDevOpsServiceError as e:
             e.message = f"Failed to get pull requests: {e.message}"
-            raise AzureDevOpsServiceError(e)
+            raise ADOApiNotFoundError(e)
         except Exception as ex:
             message = f"Unexpected error during getting pull requests: {str(ex)}"
             raise Exception(message)
@@ -1156,17 +1158,15 @@ class ADORepository(AbstractRepo):
     def get_feed(self) -> Feed:
         """Fetches the feed for the given repository."""
         try:
-            feed: Feed = self.feed_client.get_feed(
+            return self.feed_client.get_feed(
                 self.feed_name,
                 project=(None if self.organisation_artifact else self.project_id),
             )
         except AzureDevOpsServiceError:
-            feed_instance = Feed(name=self.feed_name)
-            feed: Feed = self.feed_client.create_feed(
-                feed_instance,
+            return self.feed_client.create_feed(
+                Feed(name=self.feed_name),
                 project=(None if self.organisation_artifact else self.project_id),
             )
-        return feed
 
     def create_release(
         self,
