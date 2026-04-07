@@ -29,6 +29,7 @@ from azure.devops.v7_0.git.models import (
     GitStatusContext,
     GitTargetVersionDescriptor,
     GitVersionDescriptor,
+    IdentityRefWithVote,
     TeamProjectReference,
 )
 from azure.devops.v7_0.upack_api.models import JsonPatchOperation, PackageVersionDetails
@@ -475,6 +476,40 @@ class ADOPullRequest(AbstractPullRequest):
 
         # Set auto-complete with completion options
         self.set_auto_complete(completion_options)
+
+        if self.repo.config("pull_request_approve_on_merge"):
+            self.approve_pull_request()
+
+    def approve_pull_request(self) -> None:
+        """Approves the pull request."""
+        try:
+            reviewer_id = (
+                self.pull_request.created_by.id
+                if self.pull_request.created_by
+                else None
+            )
+            if not reviewer_id:
+                raise AzureDevOpsServiceError(
+                    "Cannot approve pull request because reviewer identity is missing."
+                )
+
+            reviewer_vote = IdentityRefWithVote(id=reviewer_id, vote=10)
+            reviewer = self.repo.git_client.create_pull_request_reviewer(
+                reviewer=reviewer_vote,
+                repository_id=self.repo.id,
+                pull_request_id=self.number,
+                reviewer_id=reviewer_id,
+                project=self.repo.project_id,
+            )
+            self.repo.logger.info(
+                f"{reviewer.display_name or reviewer.id or 'Unknown'} approved pull request #{self.number}."
+            )
+        except AzureDevOpsServiceError as e:
+            e.message = f"Failed to approve pull request #{self.number}: {e.message}"
+            raise AzureDevOpsServiceError(e)
+        except Exception as ex:
+            message = f"Unexpected error during pull request approval: {str(ex)}"
+            raise Exception(message)
 
     def set_auto_complete(
         self, completion_options: GitPullRequestCompletionOptions
