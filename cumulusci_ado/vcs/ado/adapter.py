@@ -426,6 +426,10 @@ class ADOPullRequest(AbstractPullRequest):
 
             if self.pull_request.merge_status == "succeeded":
                 self.repo.logger.info("Pull request can be automatically merged.")
+
+                if self.repo.config("pull_request_approve_on_merge"):
+                    self.approve_pull_request()
+
                 return True
 
             if self.pull_request.merge_status in ("conflicts", "failure"):
@@ -437,6 +441,7 @@ class ADOPullRequest(AbstractPullRequest):
             self.repo.logger.info(
                 f"Current merge status: {self.pull_request.merge_status}. Retrying in {interval} seconds..."
             )
+
             time.sleep(interval)
 
         self.repo.logger.warning(
@@ -476,9 +481,6 @@ class ADOPullRequest(AbstractPullRequest):
 
         # Set auto-complete with completion options
         self.set_auto_complete(completion_options)
-
-        if self.repo.config("pull_request_approve_on_merge"):
-            self.approve_pull_request()
 
     def approve_pull_request(self) -> None:
         """Approves the pull request."""
