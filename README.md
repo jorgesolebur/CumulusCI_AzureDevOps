@@ -188,5 +188,5 @@ GNU General Public License v3.0
 
 ## Links
 
-- [CumulusCI](https://github.com/SFDO-Tooling/CumulusCI)
+- [CumulusCI](https://github.com/jorgesolebur/CumulusCI)
 - [Azure DevOps Python API](https://github.com/microsoft/azure-devops-python-api)
