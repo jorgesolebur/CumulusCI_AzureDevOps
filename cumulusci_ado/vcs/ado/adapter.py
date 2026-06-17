@@ -765,9 +765,14 @@ class ADORepository(AbstractRepo):
         if self._package_name:
             return self._package_name
 
-        self._package_name = self.project_config.project__package__name.replace(
-            " ", "-"
-        ).lower()
+        self._package_name = (
+            (
+                self.project_config.project__name
+                or self.project_config.project__package__name
+            )
+            .replace(" ", "-")
+            .lower()
+        )
 
         return self._package_name
 
