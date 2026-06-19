@@ -39,7 +39,15 @@ def get_ado_repo(project_config, url) -> ADORepository:
             raise ADOApiNotFoundError(f"Get ADO Repository found None. {url}")
 
         # project_config is local configuration, we need the repo config on the remote.
-        remote_config = get_remote_project_config(repo, repo.default_branch)
+        branch = repo.default_branch
+        try:
+            branch = repo.branch(project_config.repo_branch).name
+        except Exception as e:
+            project_config.logger.debug(
+                f"Branch {project_config.repo_branch} not found in repository {repo.clone_url}: {e}"
+            )
+
+        remote_config = get_remote_project_config(repo, branch)
 
         # Remote config does not have the plugin configuration. Copying it from local it does not exist.
         # Else update the missing key values.
