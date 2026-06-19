@@ -79,7 +79,7 @@ class ADODependencyPin(base_dependency.VcsDependencyPin):
     azure_devops: str
 
     @property
-    def vcsTagResolver(self):  # -> Type["AbstractTagResolver"]:
+    def vcsTagResolver(self):
         from cumulusci_ado.vcs.ado.dependencies.ado_resolvers import (  # Circular imports
             ADOTagResolver,
         )
