@@ -9,7 +9,6 @@ from cumulusci.core.dependencies.dependencies import (
     add_dependency_pin_class,
 )
 from cumulusci.core.exceptions import DependencyResolutionError
-from cumulusci.core.utils import deep_merge_plugins
 from cumulusci.vcs.bootstrap import get_remote_project_config
 from pydantic.v1 import AnyUrl, root_validator
 
@@ -47,19 +46,7 @@ def get_ado_repo(project_config, url) -> ADORepository:
                 f"Branch {project_config.repo_branch} not found in repository {repo.clone_url}: {e}"
             )
 
-        remote_config = get_remote_project_config(repo, branch)
-
-        # Remote config does not have the plugin configuration. Copying it from local it does not exist.
-        # Else update the missing key values.
-        if remote_config.plugins is None:
-            remote_config.config["plugins"] = project_config.plugins
-        else:
-            # Merge project plugins into remote plugins, keeping remote values for existing keys
-            remote_config.config["plugins"] = deep_merge_plugins(
-                remote_config.config["plugins"], project_config.plugins
-            )
-
-        repo.project_config = remote_config
+        repo.project_config = get_remote_project_config(repo, branch)
 
         return repo
     except ADOApiNotFoundError as e:
