@@ -700,6 +700,7 @@ class ADORepository(AbstractRepo):
         self.repo = None
         self.project = None
         self._package_name = kwargs.get("package_name", "")
+        self._project_name = kwargs.get("project_name", "")
         self.api_version = kwargs.get("api_version", None)
         self._tooling = None
         self._feed_client: Optional[FeedClient] = None
@@ -760,18 +761,25 @@ class ADORepository(AbstractRepo):
         return ""
 
     @property
+    def project_name(self) -> str:
+        """Returns the project name of the repository."""
+        if self._project_name:
+            return self._project_name
+
+        self._project_name = (
+            (self.project_config.project__name or "").replace(" ", "-").lower()
+        )
+
+        return self._project_name
+
+    @property
     def package_name(self) -> str:
         """Returns the package name of the repository."""
         if self._package_name:
             return self._package_name
 
         self._package_name = (
-            (
-                self.project_config.project__name
-                or self.project_config.project__package__name
-            )
-            .replace(" ", "-")
-            .lower()
+            (self.project_config.project__package__name or "").replace(" ", "-").lower()
         )
 
         return self._package_name
@@ -1058,11 +1066,11 @@ class ADORepository(AbstractRepo):
         artifacts: list[Package] = self.feed_client.get_packages(
             self.feed_name,
             project=(None if self.organisation_artifact else self.project_id),
-            package_name_query=self.package_name,
+            package_name_query=self.project_name,
             include_description=True,
         )
         pkgs: list[Package] = [
-            pkg for pkg in artifacts if pkg.name == self.package_name
+            pkg for pkg in artifacts if pkg.name == self.project_name
         ]
         if not pkgs:
             return None
@@ -1101,7 +1109,7 @@ class ADORepository(AbstractRepo):
 
             if not version:
                 raise ADOApiNotFoundError(
-                    f"Version {tag_name} not found for package {self.package_name}"
+                    f"Version {tag_name} not found for package {self.project_name}"
                 )
         except AzureDevOpsServiceError:
             message = f"Release for {tag_name} not found"
@@ -1164,7 +1172,7 @@ class ADORepository(AbstractRepo):
         ret = publish_package(
             ctool,
             feed.id,
-            self.package_name,
+            self.project_name,
             tag_name,
             artifact_path,
             description=description,
@@ -1186,7 +1194,7 @@ class ADORepository(AbstractRepo):
         ret = download_package(
             ctool,
             self.feed_name,
-            self.package_name,
+            self.project_name,
             numeric_part,
             path,
             file_filter=None,
@@ -1245,12 +1253,12 @@ class ADORepository(AbstractRepo):
 
             if not pkg:
                 raise ADOApiNotFoundError(
-                    f"Package {self.package_name} not found in feed {self.feed_name}"
+                    f"Package {self.project_name} not found in feed {self.feed_name}"
                 )
 
             if not version:
                 raise ADOApiNotFoundError(
-                    f"Version {tag_name} not found for package {self.package_name}"
+                    f"Version {tag_name} not found for package {self.project_name}"
                 )
 
             release: PackageVersion = self.feed_client.get_package_version(
@@ -1276,7 +1284,7 @@ class ADORepository(AbstractRepo):
             upack_api_client.update_package_version(
                 pkg_version_details,
                 self.feed_name,
-                self.package_name,
+                self.project_name,
                 numeric_part,
                 (None if self.organisation_artifact else self.project_id),
             )
@@ -1318,7 +1326,7 @@ class ADORepository(AbstractRepo):
             artifacts: list[Package] = self.feed_client.get_packages(
                 self.feed_name,
                 project=(None if self.organisation_artifact else self.project_id),
-                package_name_query=self.package_name,
+                package_name_query=self.project_name,
                 include_all_versions=True,
             )
 
@@ -1331,7 +1339,7 @@ class ADORepository(AbstractRepo):
             return versions
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
-                f"Could not find releases for {self.package_name} on Azure DevOps"
+                f"Could not find releases for {self.project_name} on Azure DevOps"
             )
 
     def latest_release(self) -> Optional[ADORelease]:
@@ -1340,7 +1348,7 @@ class ADORepository(AbstractRepo):
             return self.get_latest_artifact()
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
-                f"Could not find latest release for {self.package_name} on Azure DevOps"
+                f"Could not find latest release for {self.project_name} on Azure DevOps"
             )
 
     def has_issues(self) -> bool:
@@ -1453,7 +1461,7 @@ class ADORepository(AbstractRepo):
 
         if not pkg:
             raise ADOApiNotFoundError(
-                f"Could not find package {self.package_name} on Azure DevOps"
+                f"Could not find package {self.project_name} on Azure DevOps"
             )
 
         if prerelease:
@@ -1495,7 +1503,7 @@ class ADORepository(AbstractRepo):
             return self.get_latest_artifact(prerelease=True)
         except AzureDevOpsServiceError:
             raise ADOApiNotFoundError(
-                f"Could not find lastest release for {self.package_name} on Azure DevOps"
+                f"Could not find lastest release for {self.project_name} on Azure DevOps"
             )
 
     def create_commit_status(
