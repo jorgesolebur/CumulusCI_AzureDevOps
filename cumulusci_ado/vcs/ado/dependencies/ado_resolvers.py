@@ -13,7 +13,6 @@ from cumulusci.core.dependencies.resolvers import (
 )
 from cumulusci.core.exceptions import DependencyResolutionError
 from cumulusci.utils.git import get_feature_branch_name
-from cumulusci.vcs.bootstrap import find_repo_feature_prefix
 
 from cumulusci_ado.vcs.ado.adapter import ADOBranch, ADORepository
 from cumulusci_ado.vcs.ado.dependencies.ado_dependencies import (
@@ -146,22 +145,16 @@ class AbstractADOExactMatchCommitStatusResolver(
                 f"Unable to access ADO repository for {dep.url}"
             )
 
+        # Use the local context's prefix so that release/ branches are matched
+        # with the release prefix, not always the feature prefix from the remote.
         try:
-            remote_branch_prefix = find_repo_feature_prefix(repo)
+            branch_prefix, _ = context.get_release_branch_prefix_and_format_config()
+            branch = get_feature_branch_name(context.repo_branch or "", branch_prefix)
+            release_branch = repo.branch(f"{branch_prefix}{branch}")
         except Exception:
             context.logger.info(
-                f"Could not find feature branch prefix or commit-status context for {repo.clone_url}. Unable to resolve package."
+                f"Could not find exact-match branch or prefix for {repo.clone_url}. Unable to resolve package."
             )
-            return []
-
-        # Attempt exact match
-        try:
-            branch = get_feature_branch_name(
-                context.repo_branch or "", context.project__git__prefix_feature
-            )
-            release_branch = repo.branch(f"{remote_branch_prefix}{branch}")
-        except Exception:
-            context.logger.info(f"Exact-match branch not found for {repo.clone_url}.")
             return []
 
         return [release_branch]
