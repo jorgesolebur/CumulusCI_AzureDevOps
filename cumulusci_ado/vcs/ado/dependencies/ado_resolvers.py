@@ -3,6 +3,7 @@ from typing import Any, List, Optional
 
 from cumulusci.core.config.project_config import BaseProjectConfig
 from cumulusci.core.dependencies.resolvers import (
+    AbstractReleaseBranchBetaTagResolver,
     AbstractReleaseTagResolver,
     AbstractTagResolver,
     AbstractUnmanagedHeadResolver,
@@ -49,6 +50,17 @@ class ADOBetaReleaseTagResolver(ADOReleaseTagResolver):
 
     name = "ADO Release Resolver (Betas)"
     include_beta = True
+
+
+class ADOReleaseBranchBetaTagResolver(AbstractReleaseBranchBetaTagResolver):
+    """Resolver that identifies latest beta release constrained by release branch line."""
+
+    name = "ADO Release Branch Beta Resolver"
+    vcs = VCS_ADO
+
+    def get_repo(self, context: BaseProjectConfig, url: Optional[str]) -> ADORepository:
+        """Get the ADO repository for the given URL."""
+        return get_ado_repo(context, url)
 
 
 class ADOUnmanagedHeadResolver(AbstractUnmanagedHeadResolver):
@@ -223,6 +235,7 @@ ADO_RESOLVER_CLASSES: dict[str, type[Any]] = {
     DependencyResolutionStrategy.COMMIT_STATUS_RELEASE_BRANCH: ADOReleaseBranchCommitStatusResolver,
     DependencyResolutionStrategy.COMMIT_STATUS_PREVIOUS_RELEASE_BRANCH: ADOPreviousReleaseBranchCommitStatusResolver,
     DependencyResolutionStrategy.COMMIT_STATUS_DEFAULT_BRANCH: ADODefaultBranch2GPResolver,
+    DependencyResolutionStrategy.RELEASE_BRANCH_BETA_TAG: ADOReleaseBranchBetaTagResolver,
     DependencyResolutionStrategy.BETA_RELEASE_TAG: ADOBetaReleaseTagResolver,
     DependencyResolutionStrategy.RELEASE_TAG: ADOReleaseTagResolver,
     DependencyResolutionStrategy.UNMANAGED_HEAD: ADOUnmanagedHeadResolver,
