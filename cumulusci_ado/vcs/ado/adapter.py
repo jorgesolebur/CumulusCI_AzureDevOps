@@ -9,7 +9,13 @@ from typing import Iterator, Optional, Tuple, Union
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
 from azure.devops.v7_0.feed.feed_client import FeedClient
-from azure.devops.v7_0.feed.models import Feed, FeedView, Package, PackageVersion
+from azure.devops.v7_0.feed.models import (
+    Feed,
+    FeedView,
+    MinimalPackageVersion,
+    Package,
+    PackageVersion,
+)
 from azure.devops.v7_0.git.git_client import GitClient
 from azure.devops.v7_0.git.models import (
     GitAnnotatedTag,
@@ -607,6 +613,29 @@ class ADORelease(AbstractRelease):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._tag_name = kwargs.get("tag_name", "")
+        repo = kwargs.get("repo")
+        package_id = kwargs.get("package_id")
+
+        # releases() returns MinimalPackageVersion entries. Hydrate to
+        # PackageVersion only when metadata is missing and we have enough context.
+        if (
+            repo
+            and package_id
+            and isinstance(self.release, MinimalPackageVersion)
+            and not isinstance(self.release, PackageVersion)
+            and getattr(self.release, "package_description", None) is None
+            and getattr(self.release, "id", None)
+        ):
+            try:
+                self.release = repo.feed_client.get_package_version(
+                    repo.feed_name,
+                    package_id,
+                    self.release.id,
+                    project=(None if repo.organisation_artifact else repo.project_id),
+                )
+            except AzureDevOpsServiceError:
+                # Keep minimal payload if hydration fails.
+                pass
 
     @property
     def tag_name(self) -> str:
@@ -1333,7 +1362,8 @@ class ADORepository(AbstractRepo):
             versions = []
             for package in artifacts:
                 versions.extend(
-                    ADORelease(release=pkg_ver) for pkg_ver in package.versions or []
+                    ADORelease(release=pkg_ver, repo=self, package_id=package.id)
+                    for pkg_ver in package.versions or []
                 )
 
             return versions
