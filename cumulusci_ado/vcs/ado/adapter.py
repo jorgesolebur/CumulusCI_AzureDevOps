@@ -1361,6 +1361,9 @@ class ADORepository(AbstractRepo):
 
             versions = []
             for package in artifacts:
+                if package.name != self.project_name:
+                    continue
+
                 versions.extend(
                     ADORelease(release=pkg_ver, repo=self, package_id=package.id)
                     for pkg_ver in package.versions or []
