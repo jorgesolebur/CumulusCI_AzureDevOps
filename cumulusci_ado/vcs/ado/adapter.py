@@ -430,6 +430,12 @@ class ADOPullRequest(AbstractPullRequest):
         while time.time() - start_time < timeout:
             self.reload()
 
+            if (self.pull_request.status or "").lower() == "completed":
+                self.repo.logger.debug(
+                    f"Pull request #{self.number} is already completed."
+                )
+                return True
+
             if self.pull_request.merge_status == "succeeded":
                 self.repo.logger.info("Pull request can be automatically merged.")
 
@@ -479,9 +485,7 @@ class ADOPullRequest(AbstractPullRequest):
         """Merges the pull request."""
 
         if (self.pull_request.status or "").lower() == "completed":
-            self.repo.logger.info(
-                f"Pull request #{self.number} is already completed. Skipping auto-complete."
-            )
+            self.repo.logger.info(f"Pull request #{self.number} is completed.")
             return
 
         # Set PR to auto-complete. bypass_policy cannot be used with auto-complete.
