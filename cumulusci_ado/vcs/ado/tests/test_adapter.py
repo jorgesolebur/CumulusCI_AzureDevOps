@@ -5,7 +5,7 @@ import responses
 
 # Import Azure DevOps SDK classes
 from azure.devops.connection import Connection
-from azure.devops.exceptions import AzureDevOpsClientError
+from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
 from azure.devops.v7_0.git import models
 from cumulusci.core.config.project_config import BaseProjectConfig
 from msrest import Deserializer
@@ -126,8 +126,22 @@ def get_mock_pr_json(
         "target_ref_name": target_ref,
         "merge_status": merge_status,
         "is_draft": False,
+        "last_merge_source_commit": {"commit_id": TEST_COMMIT_SHA_HEAD},
         "url": f"{TEST_ADO_API_BASE_URL}/repositories/{TEST_ADO_REPO_ID}/pullrequests/{pr_id}",
     }
+
+
+def make_ado_service_error(message: str) -> AzureDevOpsServiceError:
+    wrapped = MagicMock()
+    wrapped.inner_exception = None
+    wrapped.message = message
+    wrapped.exception_id = None
+    wrapped.type_name = None
+    wrapped.type_key = None
+    wrapped.error_code = None
+    wrapped.event_id = None
+    wrapped.custom_properties = None
+    return AzureDevOpsServiceError(wrapped)
 
 
 def get_mock_commit_diffs_json(behind_count=0, ahead_count=0, changes=None):
@@ -455,6 +469,105 @@ class TestADORepositoryPullRequestsAndMerge:
         )
 
         assert ado_pr_instance is not None
+
+
+class TestADOPullRequestCompleteOverride:
+    def _build_pr(self, ado_repository_instance, status="active"):
+        pull_request = deserialize(
+            "GitPullRequest",
+            get_mock_pr_json(
+                TEST_PR_ID,
+                "Complete with override",
+                f"refs/heads/{TEST_FEATURE_BRANCH}",
+                f"refs/heads/{TEST_TARGET_BRANCH}",
+                status=status,
+                merge_status="succeeded",
+            ),
+        )
+        return ADOPullRequest(
+            repo=ado_repository_instance,
+            pull_request=pull_request,
+            options=ado_repository_instance.options,
+        )
+
+    def test_complete_pull_request_with_override_success(
+        self, ado_repository_instance: ADORepository
+    ):
+        ado_pr = self._build_pr(ado_repository_instance)
+        ado_repository_instance.git_client.update_pull_request = MagicMock()
+        ado_repository_instance.git_client.update_pull_request.return_value = (
+            deserialize(
+                "GitPullRequest",
+                get_mock_pr_json(
+                    TEST_PR_ID,
+                    "Complete with override",
+                    f"refs/heads/{TEST_FEATURE_BRANCH}",
+                    f"refs/heads/{TEST_TARGET_BRANCH}",
+                    status="completed",
+                    merge_status="succeeded",
+                ),
+            )
+        )
+
+        result = ado_pr.complete_pull_request_with_override()
+
+        assert result is True
+        assert ado_pr.pull_request.status == "completed"
+        update = (
+            ado_repository_instance.git_client.update_pull_request.call_args.kwargs[
+                "git_pull_request_to_update"
+            ]
+        )
+        assert update.status == "completed"
+        assert update.auto_complete_set_by is None
+        assert update.completion_options.bypass_policy is True
+        ado_repository_instance.logger.info.assert_called()
+
+    def test_complete_pull_request_with_override_permission_denied_warns(
+        self, ado_repository_instance: ADORepository
+    ):
+        ado_pr = self._build_pr(ado_repository_instance)
+        ado_repository_instance.git_client.update_pull_request = MagicMock(
+            side_effect=make_ado_service_error(
+                "TF401027: You need the Git 'Bypass policies when completing "
+                "pull requests' permission to perform this action on the resource."
+            )
+        )
+
+        result = ado_pr.complete_pull_request_with_override()
+
+        assert result is False
+        assert ado_pr.pull_request.status == "active"
+        ado_repository_instance.logger.warning.assert_called()
+        warning = ado_repository_instance.logger.warning.call_args.args[0]
+        assert "does not have permission to bypass policies" in warning
+
+    def test_complete_pull_request_with_override_other_error_raises(
+        self, ado_repository_instance: ADORepository
+    ):
+        ado_pr = self._build_pr(ado_repository_instance)
+        ado_repository_instance.git_client.update_pull_request = MagicMock(
+            side_effect=make_ado_service_error(
+                "Invalid argument value. Parameter name: The bypass option "
+                "cannot be used with auto-complete."
+            )
+        )
+
+        with pytest.raises(AzureDevOpsServiceError, match="Failed to complete"):
+            ado_pr.complete_pull_request_with_override()
+
+        ado_repository_instance.logger.warning.assert_not_called()
+
+    def test_merge_skips_auto_complete_when_already_completed(
+        self, ado_repository_instance: ADORepository
+    ):
+        ado_pr = self._build_pr(ado_repository_instance, status="completed")
+        ado_repository_instance.git_client.update_pull_request = MagicMock()
+
+        ado_pr.merge()
+
+        ado_repository_instance.git_client.update_pull_request.assert_not_called()
+        ado_repository_instance.logger.info.assert_called()
 
 
 class TestADORef:

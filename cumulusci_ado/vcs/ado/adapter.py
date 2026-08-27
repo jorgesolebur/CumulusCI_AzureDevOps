@@ -436,6 +436,9 @@ class ADOPullRequest(AbstractPullRequest):
                 if self.repo.config("pull_request_approve_on_merge"):
                     self.approve_pull_request()
 
+                    if self.repo.config("completion_opts_bypass_policy"):
+                        self.complete_pull_request_with_override()
+
                 return True
 
             if self.pull_request.merge_status in ("conflicts", "failure"):
@@ -475,18 +478,70 @@ class ADOPullRequest(AbstractPullRequest):
     def merge(self) -> None:
         """Merges the pull request."""
 
-        # Set PR to auto-complete and bypass rules
+        if (self.pull_request.status or "").lower() == "completed":
+            self.repo.logger.info(
+                f"Pull request #{self.number} is already completed. Skipping auto-complete."
+            )
+            return
+
+        # Set PR to auto-complete. bypass_policy cannot be used with auto-complete.
         completion_options = GitPullRequestCompletionOptions(
             delete_source_branch=self.repo.config(
                 "completion_opts_delete_source_branch"
             ),
             merge_strategy=self.repo.config("completion_opts_merge_strategy"),
-            bypass_policy=self.repo.config("completion_opts_bypass_policy"),
+            bypass_policy=False,
             bypass_reason=self.repo.config("completion_opts_bypass_reason"),
         )
 
         # Set auto-complete with completion options
         self.set_auto_complete(completion_options)
+
+    def complete_pull_request_with_override(self) -> bool:
+        """Completes the pull request immediately, bypassing branch policies.
+
+        Azure DevOps does not allow bypass_policy with auto-complete, so this
+        sets status to completed with a policy override.
+
+        Returns True if the pull request was completed. If the caller lacks
+        permission to bypass policies, logs a warning and returns False
+        without raising.
+        """
+        completion_options = GitPullRequestCompletionOptions(
+            delete_source_branch=self.repo.config(
+                "completion_opts_delete_source_branch"
+            ),
+            merge_strategy=self.repo.config("completion_opts_merge_strategy"),
+            bypass_policy=True,
+            bypass_reason=self.repo.config("completion_opts_bypass_reason"),
+        )
+
+        try:
+            self.set_auto_complete(completion_options, complete_immediately=True)
+            return True
+        except AzureDevOpsServiceError as e:
+            if self._is_bypass_permission_error(e):
+                self.repo.logger.warning(
+                    f"Cannot complete pull request #{self.number} with policy override: "
+                    "the current identity does not have permission to bypass policies. "
+                    f"{e.message}"
+                )
+                return False
+            raise
+
+    def _is_bypass_permission_error(self, error: AzureDevOpsServiceError) -> bool:
+        """Returns True when the error is a policy-bypass permission failure."""
+        message = (error.message or "").lower()
+        if "bypass" not in message:
+            return False
+        permission_markers = (
+            "permission",
+            "tf401027",
+            "not authorized",
+            "access denied",
+            "forbidden",
+        )
+        return any(marker in message for marker in permission_markers)
 
     def approve_pull_request(self) -> None:
         """Approves the pull request."""
@@ -520,33 +575,54 @@ class ADOPullRequest(AbstractPullRequest):
             raise Exception(message)
 
     def set_auto_complete(
-        self, completion_options: GitPullRequestCompletionOptions
+        self,
+        completion_options: GitPullRequestCompletionOptions,
+        complete_immediately: bool = False,
     ) -> None:
-        """Sets the pull request to auto-complete with the specified completion options."""
+        """Applies completion options to the pull request.
 
-        # Create a minimal update object with only auto-complete fields
-        auto_complete_update = GitPullRequest()
-        auto_complete_update.auto_complete_set_by = self.pull_request.created_by
-        auto_complete_update.completion_options = completion_options
+        By default, sets auto-complete. When complete_immediately is True,
+        completes the PR now. Policy bypass cannot be used with auto-complete,
+        so override completions must use complete_immediately.
+        """
+        pr_update = GitPullRequest()
+        pr_update.completion_options = completion_options
+
+        if complete_immediately:
+            pr_update.status = "completed"
+            pr_update.last_merge_source_commit = (
+                self.pull_request.last_merge_source_commit
+            )
+            failure_prefix = (
+                f"Failed to complete pull request #{self.number} with policy override"
+            )
+            unexpected_prefix = (
+                "Unexpected error during pull request completion with override"
+            )
+        else:
+            pr_update.auto_complete_set_by = self.pull_request.created_by
+            failure_prefix = (
+                f"Failed to set auto-complete on pull request #{self.number}"
+            )
+            unexpected_prefix = "Unexpected error during setting auto-complete"
 
         try:
             updated_pr = self.repo.git_client.update_pull_request(
-                git_pull_request_to_update=auto_complete_update,
+                git_pull_request_to_update=pr_update,
                 repository_id=self.repo.id,
                 pull_request_id=self.number,
                 project=self.repo.project_id,
             )
             self.repo.logger.info(
-                f"Pull request #{updated_pr.pull_request_id} set to auto-complete."
+                f"Pull request #{updated_pr.pull_request_id} "
+                f"{'completed with policy override' if complete_immediately else 'set to auto-complete'}."
             )
-            # Update our local pull request object with the returned values
             self.pull_request = updated_pr
         except AzureDevOpsServiceError as e:
-            e.message = f"Failed to set auto-complete on pull request #{self.number}: {e.message}"
+            e.message = f"{failure_prefix}: {e.message}"
             raise AzureDevOpsServiceError(e)
         except Exception as ex:
-            message = f"Unexpected error during setting auto-complete: {str(ex)}"
-            raise Exception(message)
+            raise Exception(f"{unexpected_prefix}: {str(ex)}")
 
     def update(
         self,
