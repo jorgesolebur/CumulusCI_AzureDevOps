@@ -293,6 +293,7 @@ class ADOPullRequest(AbstractPullRequest):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.options = kwargs.get("options", {})
+        self._completed_with_override = False
 
     @classmethod
     def pull_requests(
@@ -484,9 +485,10 @@ class ADOPullRequest(AbstractPullRequest):
     def merge(self) -> None:
         """Merges the pull request."""
 
-        if self._is_terminal_pr_status():
+        if self._should_skip_auto_complete():
             self.repo.logger.info(
-                f"Pull request #{self.number} is already {self._pr_status_value()}."
+                f"Pull request #{self.number} is already "
+                f"{self._pr_status_value() or 'completing'}; skipping auto-complete."
             )
             return
 
@@ -524,6 +526,7 @@ class ADOPullRequest(AbstractPullRequest):
 
         try:
             self.set_auto_complete(completion_options, complete_immediately=True)
+            self._completed_with_override = True
             return True
         except AzureDevOpsServiceError as e:
             if self._is_bypass_permission_error(e):
@@ -549,21 +552,47 @@ class ADOPullRequest(AbstractPullRequest):
         )
         return any(marker in message for marker in permission_markers)
 
+    def _error_text(self, error: AzureDevOpsServiceError) -> str:
+        """Flatten an Azure DevOps error (including inner exceptions) to text."""
+        parts = [getattr(error, "message", None), str(error)]
+        inner = getattr(error, "inner_exception", None)
+        if inner is not None:
+            parts.append(getattr(inner, "message", None))
+            parts.append(str(inner))
+        return " ".join(part for part in parts if part).lower()
+
     def _pr_status_value(self) -> str:
         """Normalized pull request status string."""
         status = getattr(self.pull_request, "status", None)
         if status is None:
             return ""
-        value = getattr(status, "value", status)
+        value = getattr(status, "value", None)
+        if value is None:
+            value = status
         return str(value or "").lower()
 
     def _is_terminal_pr_status(self) -> bool:
         """Returns True when the PR can no longer be edited (completed/abandoned)."""
-        return self._pr_status_value() in ("completed", "abandoned")
+        status = self._pr_status_value()
+        return "completed" in status or "abandoned" in status
+
+    def _is_pr_completing_or_done(self) -> bool:
+        """Returns True when the PR is completed, abandoned, or already completing."""
+        if self._completed_with_override or self._is_terminal_pr_status():
+            return True
+        if getattr(self.pull_request, "closed_date", None):
+            return True
+        if getattr(self.pull_request, "completion_queue_time", None):
+            return True
+        return False
+
+    def _should_skip_auto_complete(self) -> bool:
+        """Returns True when setting auto-complete would be a no-op."""
+        return self._is_pr_completing_or_done()
 
     def _is_unmodifiable_pr_state_error(self, error: AzureDevOpsServiceError) -> bool:
         """Returns True when Azure DevOps rejects an edit because of PR state."""
-        message = (error.message or "").lower()
+        message = self._error_text(error)
         return "tf401181" in message or "cannot be edited due to its state" in message
 
     def approve_pull_request(self) -> None:
@@ -608,14 +637,14 @@ class ADOPullRequest(AbstractPullRequest):
         completes the PR now. Policy bypass cannot be used with auto-complete,
         so override completions must use complete_immediately.
 
-        Already-completed or abandoned PRs are a no-op. TF401181 (PR cannot be
-        edited due to its state) is treated as success when a reload confirms
-        the PR is already in a terminal state.
+        Already-completed, abandoned, or completing PRs are a no-op. TF401181
+        (PR cannot be edited due to its state) is treated as success: Azure
+        often still reports status=active while a bypass completion is queued.
         """
-        if self._is_terminal_pr_status():
+        if self._should_skip_auto_complete():
             self.repo.logger.info(
-                f"Pull request #{self.number} is already {self._pr_status_value()}; "
-                "skipping auto-complete."
+                f"Pull request #{self.number} is already "
+                f"{self._pr_status_value() or 'completing'}; skipping auto-complete."
             )
             return
 
@@ -658,12 +687,12 @@ class ADOPullRequest(AbstractPullRequest):
                     self.reload()
                 except Exception:
                     pass
-                if self._is_terminal_pr_status():
-                    self.repo.logger.info(
-                        f"Pull request #{self.number} is already "
-                        f"{self._pr_status_value()}; skipping auto-complete."
-                    )
-                    return
+                self.repo.logger.info(
+                    f"Pull request #{self.number} cannot be edited due to its state "
+                    f"(status={self._pr_status_value() or 'unknown'}); "
+                    "skipping auto-complete."
+                )
+                return
             e.message = f"{failure_prefix}: {e.message}"
             raise AzureDevOpsServiceError(e)
         except Exception as ex:

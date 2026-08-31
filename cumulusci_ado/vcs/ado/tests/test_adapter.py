@@ -598,7 +598,7 @@ class TestADOPullRequestCompleteOverride:
         assert ado_pr.pull_request.status == "completed"
         ado_repository_instance.logger.info.assert_called()
 
-    def test_merge_tf401181_still_raises_when_pr_is_active(
+    def test_merge_treats_tf401181_as_success_when_pr_still_active(
         self, ado_repository_instance: ADORepository
     ):
         ado_pr = self._build_pr(ado_repository_instance, status="active")
@@ -621,10 +621,35 @@ class TestADOPullRequestCompleteOverride:
             )
         )
 
-        with pytest.raises(
-            AzureDevOpsServiceError, match="Failed to set auto-complete"
-        ):
-            ado_pr.merge()
+        ado_pr.merge()
+
+        ado_repository_instance.git_client.update_pull_request.assert_called_once()
+        ado_repository_instance.logger.info.assert_called()
+
+    def test_merge_skips_auto_complete_after_override_completion(
+        self, ado_repository_instance: ADORepository
+    ):
+        ado_pr = self._build_pr(ado_repository_instance, status="active")
+        ado_repository_instance.git_client.update_pull_request = MagicMock(
+            return_value=deserialize(
+                "GitPullRequest",
+                get_mock_pr_json(
+                    TEST_PR_ID,
+                    "Complete with override",
+                    f"refs/heads/{TEST_FEATURE_BRANCH}",
+                    f"refs/heads/{TEST_TARGET_BRANCH}",
+                    status="active",
+                    merge_status="succeeded",
+                ),
+            )
+        )
+
+        result = ado_pr.complete_pull_request_with_override()
+        ado_pr.merge()
+
+        assert result is True
+        assert ado_pr._completed_with_override is True
+        assert ado_repository_instance.git_client.update_pull_request.call_count == 1
 
 
 class TestADORef:
