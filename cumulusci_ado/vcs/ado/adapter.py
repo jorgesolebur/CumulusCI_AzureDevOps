@@ -430,9 +430,9 @@ class ADOPullRequest(AbstractPullRequest):
         while time.time() - start_time < timeout:
             self.reload()
 
-            if (self.pull_request.status or "").lower() == "completed":
+            if self._is_terminal_pr_status():
                 self.repo.logger.debug(
-                    f"Pull request #{self.number} is already completed."
+                    f"Pull request #{self.number} is already {self._pr_status_value()}."
                 )
                 return True
 
@@ -484,8 +484,10 @@ class ADOPullRequest(AbstractPullRequest):
     def merge(self) -> None:
         """Merges the pull request."""
 
-        if (self.pull_request.status or "").lower() == "completed":
-            self.repo.logger.info(f"Pull request #{self.number} is completed.")
+        if self._is_terminal_pr_status():
+            self.repo.logger.info(
+                f"Pull request #{self.number} is already {self._pr_status_value()}."
+            )
             return
 
         # Set PR to auto-complete. bypass_policy cannot be used with auto-complete.
@@ -547,6 +549,23 @@ class ADOPullRequest(AbstractPullRequest):
         )
         return any(marker in message for marker in permission_markers)
 
+    def _pr_status_value(self) -> str:
+        """Normalized pull request status string."""
+        status = getattr(self.pull_request, "status", None)
+        if status is None:
+            return ""
+        value = getattr(status, "value", status)
+        return str(value or "").lower()
+
+    def _is_terminal_pr_status(self) -> bool:
+        """Returns True when the PR can no longer be edited (completed/abandoned)."""
+        return self._pr_status_value() in ("completed", "abandoned")
+
+    def _is_unmodifiable_pr_state_error(self, error: AzureDevOpsServiceError) -> bool:
+        """Returns True when Azure DevOps rejects an edit because of PR state."""
+        message = (error.message or "").lower()
+        return "tf401181" in message or "cannot be edited due to its state" in message
+
     def approve_pull_request(self) -> None:
         """Approves the pull request."""
         try:
@@ -588,7 +607,18 @@ class ADOPullRequest(AbstractPullRequest):
         By default, sets auto-complete. When complete_immediately is True,
         completes the PR now. Policy bypass cannot be used with auto-complete,
         so override completions must use complete_immediately.
+
+        Already-completed or abandoned PRs are a no-op. TF401181 (PR cannot be
+        edited due to its state) is treated as success when a reload confirms
+        the PR is already in a terminal state.
         """
+        if self._is_terminal_pr_status():
+            self.repo.logger.info(
+                f"Pull request #{self.number} is already {self._pr_status_value()}; "
+                "skipping auto-complete."
+            )
+            return
+
         pr_update = GitPullRequest()
         pr_update.completion_options = completion_options
 
@@ -623,6 +653,17 @@ class ADOPullRequest(AbstractPullRequest):
             )
             self.pull_request = updated_pr
         except AzureDevOpsServiceError as e:
+            if self._is_unmodifiable_pr_state_error(e):
+                try:
+                    self.reload()
+                except Exception:
+                    pass
+                if self._is_terminal_pr_status():
+                    self.repo.logger.info(
+                        f"Pull request #{self.number} is already "
+                        f"{self._pr_status_value()}; skipping auto-complete."
+                    )
+                    return
             e.message = f"{failure_prefix}: {e.message}"
             raise AzureDevOpsServiceError(e)
         except Exception as ex:
