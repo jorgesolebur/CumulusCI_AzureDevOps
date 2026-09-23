@@ -356,6 +356,29 @@ class TestADORepositoryRefsAndTags:
         assert tag.tag.name == tag_name_to_create
         assert tag.sha == "newly_created_tag_object_sha"
 
+    @responses.activate
+    def test_delete_tag_success(self, ado_repository_instance: ADORepository):
+        tag_ref_json = get_mock_git_ref_json(
+            f"refs/tags/{TEST_TAG_NAME}", TEST_TAG_OBJECT_SHA, TEST_PEELED_COMMIT_SHA
+        )
+        ado_repository_instance.git_client.get_refs = MagicMock(
+            return_value=[deserialize("GitRef", tag_ref_json)]
+        )
+        result = MagicMock(success=True)
+        ado_repository_instance.git_client.update_refs = MagicMock(
+            return_value=[result]
+        )
+
+        ado_repository_instance.delete_tag(TEST_TAG_NAME)
+
+        ado_repository_instance.git_client.update_refs.assert_called_once()
+        ref_updates = ado_repository_instance.git_client.update_refs.call_args[0][0]
+        assert ref_updates[0].name == f"refs/tags/{TEST_TAG_NAME}"
+        assert ref_updates[0].old_object_id == TEST_TAG_OBJECT_SHA
+        assert (
+            ref_updates[0].new_object_id == "0000000000000000000000000000000000000000"
+        )
+
 
 class TestADORepositoryBranchesAndComparison:
     @responses.activate
