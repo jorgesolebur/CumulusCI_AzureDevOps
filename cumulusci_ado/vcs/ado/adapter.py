@@ -30,6 +30,7 @@ from azure.devops.v7_0.git.models import (
     GitPullRequestQueryInput,
     GitPullRequestSearchCriteria,
     GitRef,
+    GitRefUpdate,
     GitRepository,
     GitStatus,
     GitStatusContext,
@@ -1111,6 +1112,36 @@ class ADORepository(AbstractRepo):
             raise AzureDevOpsClientError(f"Could not create tag {tag_name} on ADO.")
 
         return ADOTag(tag=tag)
+
+    def delete_tag(self, tag_name: str) -> None:
+        """Delete the git tag with the given name."""
+        ref = self.get_ref_for_tag(tag_name)
+
+        if ref is None:
+            raise ADOApiNotFoundError(f"Could not find tag {tag_name} on ADO.")
+
+        name = getattr(ref.ref, "name", None) or f"refs/tags/{tag_name}"
+        update = GitRefUpdate(
+            name=name,
+            old_object_id=ref.sha,
+            new_object_id="0000000000000000000000000000000000000000",
+        )
+        try:
+            results = self.git_client.update_refs(
+                [update], self.id, project=self.project_id
+            )
+        except Exception as e:
+            raise AzureDevOpsClientError(
+                f"Could not delete tag {tag_name} on ADO. Error: {e}"
+            )
+
+        if results and not getattr(results[0], "success", True):
+            detail = getattr(results[0], "custom_message", None) or getattr(
+                results[0], "update_status", ""
+            )
+            raise AzureDevOpsClientError(
+                f"Could not delete tag {tag_name} on ADO. {detail}"
+            )
 
     def branch(self, branch_name) -> ADOBranch:
         # # Fetches a branch from the given repository
