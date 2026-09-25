@@ -20,6 +20,7 @@ from cumulusci_ado.vcs.ado.adapter import (
     ADORepository,
     ADOTag,
 )
+from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
 # parse_repo_url will be patched
 
@@ -111,24 +112,38 @@ def get_mock_annotated_tag_json(
 
 
 def get_mock_pr_json(
-    pr_id, title, source_ref, target_ref, status="active", merge_status="queued"
+    pr_id,
+    title,
+    source_ref,
+    target_ref,
+    status="active",
+    merge_status="queued",
+    description="PR Description",
+    closed_date=None,
+    merge_commit_sha=None,
 ):
-    return {
-        "pull_request_id": pr_id,
+    data = {
+        "pullRequestId": pr_id,
         "repository": get_mock_repo_json(),
         "codeReviewId": pr_id + 1000,
         "status": status,
-        "created_by": get_mock_identity_ref_json(),
-        "creation_date": "2023-01-01T10:00:00Z",
+        "createdBy": get_mock_identity_ref_json(),
+        "creationDate": "2023-01-01T10:00:00Z",
         "title": title,
-        "description": "PR Description",
-        "source_ref_name": source_ref,
-        "target_ref_name": target_ref,
-        "merge_status": merge_status,
-        "is_draft": False,
-        "last_merge_source_commit": {"commit_id": TEST_COMMIT_SHA_HEAD},
+        "description": description,
+        "sourceRefName": source_ref,
+        "targetRefName": target_ref,
+        "mergeStatus": merge_status,
+        "isDraft": False,
+        "lastMergeSourceCommit": {"commitId": TEST_COMMIT_SHA_HEAD},
         "url": f"{TEST_ADO_API_BASE_URL}/repositories/{TEST_ADO_REPO_ID}/pullrequests/{pr_id}",
+        "remoteUrl": f"{TEST_ADO_BASE_URL}/{TEST_ADO_PROJECT_NAME}/_git/{TEST_ADO_REPO_NAME}/pullrequest/{pr_id}",
     }
+    if closed_date:
+        data["closedDate"] = closed_date
+    if merge_commit_sha:
+        data["lastMergeCommit"] = {"commitId": merge_commit_sha}
+    return data
 
 
 def make_ado_service_error(message: str) -> AzureDevOpsServiceError:
@@ -696,3 +711,188 @@ class TestADOBranch:  # ADOBranch methods also make SDK calls
 
         assert ado_branch.branch is not None
         assert ado_branch.branch.name == f"refs/heads/{branch_name_to_get}"
+
+
+class TestADOPullRequestNotesFields:
+    def _pr(self, ado_repository_instance, **kwargs):
+        defaults = {
+            "pr_id": TEST_PR_ID,
+            "title": "Subject of the pull request",
+            "source_ref": f"refs/heads/{TEST_FEATURE_BRANCH}",
+            "target_ref": f"refs/heads/{TEST_DEFAULT_BRANCH}",
+            "status": "completed",
+            "closed_date": "2023-02-01T12:00:00Z",
+            "merge_commit_sha": TEST_COMMIT_SHA_HEAD,
+        }
+        defaults.update(kwargs)
+        return ADOPullRequest(
+            repo=ado_repository_instance,
+            pull_request=deserialize("GitPullRequest", get_mock_pr_json(**defaults)),
+        )
+
+    def test_body_html_url_and_merge_commit(self, ado_repository_instance):
+        pr = self._pr(ado_repository_instance, description="A long description")
+        assert pr.body == "A long description"
+        assert pr.title == "Subject of the pull request"
+        assert str(pr.number) in pr.html_url
+        assert "pullrequest" in pr.html_url
+        assert pr.merge_commit_sha == TEST_COMMIT_SHA_HEAD
+        assert pr.head_ref == TEST_FEATURE_BRANCH
+        assert pr.merged_at is not None
+
+    def test_merged_at_none_when_not_completed(self, ado_repository_instance):
+        pr = self._pr(
+            ado_repository_instance,
+            status="active",
+            closed_date="2023-02-01T12:00:00Z",
+        )
+        assert pr.merged_at is None
+
+    def test_pull_requests_maps_closed_to_completed(self, ado_repository_instance):
+        ado_repository_instance.git_client.get_pull_requests = MagicMock(
+            return_value=[]
+        )
+        ado_repository_instance.pull_requests(
+            state="closed", base=TEST_DEFAULT_BRANCH, direction="asc"
+        )
+        args, kwargs = ado_repository_instance.git_client.get_pull_requests.call_args
+        search_criteria = args[1]
+        assert search_criteria.status == "completed"
+        assert search_criteria.target_ref_name == f"refs/heads/{TEST_DEFAULT_BRANCH}"
+
+    def test_pull_requests_maps_active(self, ado_repository_instance):
+        ado_repository_instance.git_client.get_pull_requests = MagicMock(
+            return_value=[]
+        )
+        ado_repository_instance.pull_requests(state="active")
+        search_criteria = (
+            ado_repository_instance.git_client.get_pull_requests.call_args[0][1]
+        )
+        assert search_criteria.status == "active"
+
+    def test_resolve_release_notes_path_template(self, ado_repository_instance):
+        ado_repository_instance.config = MagicMock(return_value="docs/notes/{tag}.md")
+        assert (
+            ado_repository_instance.resolve_release_notes_path("beta/1.2.0")
+            == "docs/notes/beta/1.2.0.md"
+        )
+
+    def test_resolve_release_notes_path_directory(self, ado_repository_instance):
+        ado_repository_instance.config = MagicMock(return_value="changelogs")
+        assert (
+            ado_repository_instance.resolve_release_notes_path("release/1.0.0")
+            == "changelogs/release/1.0.0.md"
+        )
+
+    def test_resolve_release_notes_path_default(self, ado_repository_instance):
+        ado_repository_instance.config = MagicMock(return_value=None)
+        assert (
+            ado_repository_instance.resolve_release_notes_path("beta/1.2.0")
+            == "release-notes/beta/1.2.0.md"
+        )
+
+    def test_artifact_ui_url_project_scoped(self, ado_repository_instance):
+        ado_repository_instance._service_config = MagicMock(url="dev.azure.com/TestOrg")
+        ado_repository_instance._project_name = "sfcore-p1-base"
+        ado_repository_instance.project_config.project__custom__ado_feedname = None
+        ado_repository_instance.project_config.project__custom__ado_organisation_artifact = (
+            None
+        )
+        ado_repository_instance.config = MagicMock(
+            side_effect=lambda key: {
+                "feed_name": "SFCore Packages",
+                "organisation_artifact": False,
+            }.get(key)
+        )
+        with patch(
+            "cumulusci_ado.vcs.ado.adapter.custom_to_semver", return_value="1.2.0"
+        ):
+            url = ado_repository_instance.artifact_ui_url("release/1.2.0")
+        assert url is not None
+        assert "_artifacts/feed/" in url
+        assert "UPack/sfcore-p1-base" in url
+        assert TEST_ADO_PROJECT_NAME in url
+        assert url.endswith("/overview/1.2.0")
+
+    def test_artifact_ui_url_organisation_scoped(self, ado_repository_instance):
+        ado_repository_instance._service_config = MagicMock(url="dev.azure.com/TestOrg")
+        ado_repository_instance._project_name = "sfcore-p1-base"
+        ado_repository_instance.project_config.project__custom__ado_feedname = (
+            "sfcore-packages"
+        )
+        ado_repository_instance.project_config.project__custom__ado_organisation_artifact = (
+            True
+        )
+        with patch(
+            "cumulusci_ado.vcs.ado.adapter.custom_to_semver", return_value="1.2.0"
+        ):
+            url = ado_repository_instance.artifact_ui_url("release/1.2.0")
+        assert url is not None
+        assert url.startswith("https://dev.azure.com/TestOrg/_artifacts/feed/")
+        assert TEST_ADO_PROJECT_NAME not in url.split("_artifacts")[0]
+
+    def test_compare_files_url(self, ado_repository_instance):
+        url = ado_repository_instance.compare_files_url(
+            "corus-beta/2.0.0.2", "corus-beta/2.0.0.3"
+        )
+        assert url == (
+            f"{TEST_ADO_BASE_URL}/{TEST_ADO_PROJECT_NAME}/_git/{TEST_ADO_REPO_NAME}"
+            "/branchCompare?baseVersion=GTcorus-beta/2.0.0.2"
+            "&targetVersion=GTcorus-beta/2.0.0.3&_a=files"
+        )
+
+    def test_compare_files_url_requires_both_tags(self, ado_repository_instance):
+        assert (
+            ado_repository_instance.compare_files_url("", "corus-beta/2.0.0.3") is None
+        )
+        assert (
+            ado_repository_instance.compare_files_url("corus-beta/2.0.0.2", "") is None
+        )
+
+    def test_tag_web_url(self, ado_repository_instance):
+        url = ado_repository_instance.tag_web_url("corus-beta/2.0.0.3")
+        assert url == (
+            f"{TEST_ADO_BASE_URL}/{TEST_ADO_PROJECT_NAME}/_git/{TEST_ADO_REPO_NAME}"
+            "?version=GTcorus-beta%2F2.0.0.3"
+        )
+
+    def test_tag_web_url_requires_tag(self, ado_repository_instance):
+        assert ado_repository_instance.tag_web_url("") is None
+
+    def test_merge_package_description_fields(self, ado_repository_instance):
+        version = MagicMock()
+        version.package_description = '{"tag_name": "beta/1.2.0", "version_id": "04t"}'
+        version.description = None
+        ado_repository_instance.get_version_package = MagicMock(
+            return_value=(version, MagicMock())
+        )
+        data = ado_repository_instance.merge_package_description_fields(
+            "beta/1.2.0", {"release_notes_path": "release-notes/beta/1.2.0.md"}
+        )
+        assert data["tag_name"] == "beta/1.2.0"
+        assert data["version_id"] == "04t"
+        assert data["release_notes_path"] == "release-notes/beta/1.2.0.md"
+
+    def test_create_branch_from_default_when_missing(self, ado_repository_instance):
+        source = MagicMock()
+        source.commit_id = TEST_COMMIT_SHA_HEAD
+        created = MagicMock()
+        created.commit_id = TEST_COMMIT_SHA_HEAD
+        ado_repository_instance.git_client.update_refs = MagicMock(
+            return_value=[MagicMock(success=True)]
+        )
+        with patch("cumulusci_ado.vcs.ado.adapter.ADOBranch") as mock_branch:
+            mock_branch.side_effect = [
+                ADOApiNotFoundError("missing"),
+                source,
+                created,
+            ]
+            result = ado_repository_instance.create_branch(
+                "cci/release-notes/beta/1.2.0"
+            )
+        assert result is created
+        args, kwargs = ado_repository_instance.git_client.update_refs.call_args
+        ref_update = args[0][0]
+        assert ref_update.name == "refs/heads/cci/release-notes/beta/1.2.0"
+        assert ref_update.new_object_id == TEST_COMMIT_SHA_HEAD
+        assert ref_update.old_object_id == "0000000000000000000000000000000000000000"
