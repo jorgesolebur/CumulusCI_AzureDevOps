@@ -194,34 +194,33 @@ class AzureDevOpsService(VCSService):
 
     def release_notes_generator(self, options: dict) -> "ADOReleaseNotesGenerator":
         from cumulusci_ado.vcs.ado.generator import ADOReleaseNotesGenerator
+        from cumulusci_ado.vcs.ado.release_notes.parser import parser_configs
 
         github_info = {
             "github_owner": self.config.repo_owner,
             "github_repo": self.config.repo_name,
             "github_username": self.service_config.username,
-            "github_password": self.service_config.password,
+            "github_password": getattr(self.service_config, "token", None),
             "default_branch": self.config.project__git__default_branch,
             "prefix_beta": self.config.project__git__prefix_beta,
             "prefix_prod": self.config.project__git__prefix_release,
         }
 
         generator = ADOReleaseNotesGenerator(
-            self.core_client,
+            self.get_repository(),
             github_info,
-            self.config.project__git__release_notes__parsers.values(),
+            parser_configs(self.config),
             options["tag"],
             options.get("last_tag"),
             options.get("link_pr", False),
             options.get("publish", False),
-            False,  # self.get_repository().has_issues
+            False,
             options.get("include_empty", False),
             version_id=options.get("version_id"),
             trial_info=options.get("trial_info", False),
             sandbox_date=options.get("sandbox_date", None),
             production_date=options.get("production_date", None),
         )
-
-        # TODO: Implement the generator logic
 
         return generator
 

@@ -1,10 +1,12 @@
 import json
 import os
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from re import Pattern
 from typing import Iterator, Optional, Tuple, Union
+from urllib.parse import quote
 
 from azure.devops.connection import Connection
 from azure.devops.exceptions import AzureDevOpsClientError, AzureDevOpsServiceError
@@ -18,17 +20,21 @@ from azure.devops.v7_0.feed.models import (
 )
 from azure.devops.v7_0.git.git_client import GitClient
 from azure.devops.v7_0.git.models import (
+    Change,
     GitAnnotatedTag,
     GitBaseVersionDescriptor,
     GitBranchStats,
     GitCommit,
     GitCommitDiffs,
+    GitCommitRef,
+    GitItem,
     GitObject,
     GitPullRequest,
     GitPullRequestCompletionOptions,
     GitPullRequestQuery,
     GitPullRequestQueryInput,
     GitPullRequestSearchCriteria,
+    GitPush,
     GitRef,
     GitRefUpdate,
     GitRepository,
@@ -37,6 +43,7 @@ from azure.devops.v7_0.git.models import (
     GitTargetVersionDescriptor,
     GitVersionDescriptor,
     IdentityRefWithVote,
+    ItemContent,
     TeamProjectReference,
 )
 from azure.devops.v7_0.upack_api.models import JsonPatchOperation, PackageVersionDetails
@@ -66,6 +73,16 @@ from cumulusci_ado.vcs.ado.exceptions import ADOApiNotFoundError
 
 RELEASE = "Release"
 PRERELEASE = "Prerelease"
+
+ADO_PR_STATUS_MAP = {
+    "open": "active",
+    "active": "active",
+    "closed": "completed",
+    "completed": "completed",
+    "abandoned": "abandoned",
+    "all": "all",
+}
+ADO_ZERO_OID = "0000000000000000000000000000000000000000"
 
 
 class ADORef(AbstractRef):
@@ -216,6 +233,22 @@ class ADOCommit(AbstractRepoCommit):
         """Gets the SHA of the commit."""
         return self._sha
 
+    @property
+    def author_date(self) -> Optional[datetime]:
+        """Gets the author date of the commit as a UTC datetime."""
+        author = getattr(self.commit, "author", None) if self.commit else None
+        date = getattr(author, "date", None) if author else None
+        if date is None:
+            return None
+        if isinstance(date, str):
+            try:
+                date = datetime.fromisoformat(date.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if date.tzinfo is None:
+            return date.replace(tzinfo=UTC)
+        return date
+
 
 class ADOBranch(AbstractBranch):
     repo: "ADORepository"
@@ -310,21 +343,50 @@ class ADOPullRequest(AbstractPullRequest):
     ) -> list["ADOPullRequest"]:
         """Fetches all pull requests from the repository."""
         try:
+            ado_status = ADO_PR_STATUS_MAP.get((state or "active").lower(), "active")
             search_criteria = GitPullRequestSearchCriteria(
                 target_ref_name=f"refs/heads/{base}" if base else None,
                 source_ref_name=f"refs/heads/{head}" if head else None,
-                status="open",
+                status=ado_status,
                 repository_id=repo.id,
                 source_repository_id=repo.id,
             )
-            pull_requests = repo.git_client.get_pull_requests(
-                repo.id, search_criteria, repo.project_id
-            )
+
+            pull_requests: list[GitPullRequest] = []
+            skip = 0
+            page_size = 100
+            while True:
+                batch = repo.git_client.get_pull_requests(
+                    repo.id,
+                    search_criteria,
+                    repo.project_id,
+                    skip=skip,
+                    top=page_size,
+                )
+                if batch is None or isinstance(batch, (str, bytes)):
+                    break
+                if not isinstance(batch, Sequence):
+                    break
+                if not batch:
+                    break
+                pull_requests.extend(batch)
+                if len(batch) < page_size:
+                    break
+                skip += page_size
+
+            sort_attr = {
+                "createdDate": "creation_date",
+                "creationDate": "creation_date",
+                "closedDate": "closed_date",
+            }.get(sort or "creationDate", sort or "pull_request_id")
 
             pull_requests.sort(
-                key=lambda p: getattr(p, sort or "pull_request_id", "pull_request_id"),
+                key=lambda p: getattr(p, sort_attr, None) or 0,
                 reverse=(direction == "desc"),
             )
+
+            if number is not None and number >= 0:
+                pull_requests = pull_requests[:number]
 
             return [
                 ADOPullRequest(repo=repo, pull_request=pull_request)
@@ -419,6 +481,51 @@ class ADOPullRequest(AbstractPullRequest):
     def head_ref(self) -> str:
         """Gets the head reference of the pull request."""
         return sanitize_path_name(self.pull_request.source_ref_name or "")
+
+    @property
+    def body(self) -> str:
+        """Gets the pull request description."""
+        return self.pull_request.description or ""
+
+    @property
+    def html_url(self) -> str:
+        """Gets the web URL of the pull request."""
+        if self.pull_request.remote_url:
+            return self.pull_request.remote_url
+        web = ""
+        if self.repo and getattr(self.repo, "repo", None):
+            web = getattr(self.repo.repo, "web_url", None) or ""
+        if web:
+            return f"{web.rstrip('/')}/pullrequest/{self.number}"
+        return self.pull_request.url or ""
+
+    @property
+    def merge_commit_sha(self) -> Optional[str]:
+        """Gets the merge commit SHA of the pull request."""
+        last_merge = getattr(self.pull_request, "last_merge_commit", None)
+        if last_merge is None:
+            return None
+        if isinstance(last_merge, dict):
+            return last_merge.get("commit_id") or last_merge.get("commitId")
+        return getattr(last_merge, "commit_id", None)
+
+    @property
+    def merged_at(self) -> Optional[datetime]:
+        """Gets the merged date of the pull request. None when the PR was not completed."""
+        status = str(getattr(self.pull_request, "status", "") or "").lower()
+        if "completed" not in status:
+            return None
+        closed = self.pull_request.closed_date
+        if closed is None:
+            return None
+        if isinstance(closed, str):
+            try:
+                closed = datetime.fromisoformat(closed.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if getattr(closed, "tzinfo", None) is None:
+            return closed.replace(tzinfo=UTC)
+        return closed
 
     def can_auto_merge(self) -> bool:
         """
@@ -750,11 +857,6 @@ class ADOPullRequest(AbstractPullRequest):
         """Gets the pull request title."""
         return self.pull_request.title or ""
 
-    @property
-    def merged_at(self) -> datetime:
-        """Gets the merged date of the short pull request."""
-        return self.pull_request.closed_date or datetime.now(UTC)
-
 
 class ADORelease(AbstractRelease):
     """Azure DevOps release object for creating and managing releases."""
@@ -1002,7 +1104,7 @@ class ADORepository(AbstractRepo):
             )
         return self._tooling
 
-    def config(self, key: str) -> Optional[Union[str, bool]]:
+    def config(self, key: str) -> Optional[Union[str, bool, list]]:
         """Returns the plugin configuration for the ADO."""
         return self.project_config.lookup(
             f"plugins__azure_devops__config__{key}", default=None
@@ -1669,6 +1771,232 @@ class ADORepository(AbstractRepo):
         contents_io.url = f"{file_path} from {self.repo_url}"  # type: ignore
 
         return contents_io
+
+    def list_tag_names(self) -> list[str]:
+        """Returns annotated and lightweight tag names in the repository."""
+        refs: list[GitRef] = (
+            self.git_client.get_refs(
+                self.id,
+                self.project_id,
+                filter="tags/",
+                peel_tags=True,
+                top=1000,
+            )
+            or []
+        )
+        names = []
+        for ref in refs:
+            name = ref.name or ""
+            if name.startswith("refs/tags/"):
+                names.append(name[len("refs/tags/") :])
+        return names
+
+    def resolve_release_notes_path(self, tag_name: str) -> str:
+        """Resolves the markdown path for a release tag from plugin config."""
+        template = self.config("release_notes_path") or "release-notes/{tag}.md"
+        template = str(template).strip() or "release-notes/{tag}.md"
+
+        if "{project_name}" in template:
+            template = template.replace("{project_name}", self.project_name)
+
+        if "{tag}" in template:
+            path = template.replace("{tag}", tag_name)
+        else:
+            path = f"{template.rstrip('/')}/{tag_name}.md"
+        return path.lstrip("/")
+
+    def artifact_ui_url(self, tag_name: str) -> Optional[str]:
+        """Builds the Azure Artifacts UI URL for a package version."""
+        try:
+            numeric = custom_to_semver(tag_name, self.project_config)
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+        org_url = ""
+        if self.service_config and getattr(self.service_config, "url", None):
+            org_url = str(self.service_config.url).rstrip("/")
+        if not org_url:
+            return None
+
+        feed = self.feed_name
+        package = self.project_name
+        if self.organisation_artifact:
+            return (
+                f"https://{org_url}/_artifacts/feed/{feed}/UPack/{package}"
+                f"/overview/{numeric}"
+            )
+        project = ""
+        if self.project and getattr(self.project, "name", None):
+            project = self.project.name
+        else:
+            project = self.repo_owner
+        if not project:
+            return None
+        return (
+            f"https://{org_url}/{project}/_artifacts/feed/{feed}/UPack/{package}"
+            f"/overview/{numeric}"
+        )
+
+    def compare_files_url(self, base_tag: str, target_tag: str) -> Optional[str]:
+        """ADO tag-to-tag file compare URL (branchCompare, _a=files)."""
+        if not base_tag or not target_tag:
+            return None
+        web = ""
+        if self.repo:
+            web = getattr(self.repo, "web_url", None) or ""
+        web = str(web).rstrip("/")
+        if not web:
+            return None
+        base = quote(f"GT{base_tag}", safe="/")
+        target = quote(f"GT{target_tag}", safe="/")
+        return f"{web}/branchCompare?baseVersion={base}&targetVersion={target}&_a=files"
+
+    def tag_web_url(self, tag_name: str) -> Optional[str]:
+        """ADO repository page URL pinned to a git tag (``version=GT...``)."""
+        if not tag_name:
+            return None
+        web = ""
+        if self.repo:
+            web = getattr(self.repo, "web_url", None) or ""
+        web = str(web).rstrip("/")
+        if not web:
+            return None
+        return f"{web}?version=GT{quote(tag_name, safe='')}"
+
+    def create_branch(
+        self, branch_name: str, source_branch: Optional[str] = None
+    ) -> ADOBranch:
+        """Creates a branch from `source_branch` (default branch if omitted).
+
+        Returns the existing branch when it is already present.
+        """
+        branch_name = sanitize_path_name(branch_name)
+        source_name = sanitize_path_name(source_branch or self.default_branch)
+        try:
+            existing = ADOBranch(self, branch_name)
+            if existing.commit_id:
+                return existing
+        except ADOApiNotFoundError:
+            pass
+
+        source = ADOBranch(self, source_name)
+        source_sha = source.commit_id
+        if not source_sha:
+            raise ADOApiNotFoundError(
+                f"Could not find commit for branch {source_name} on Azure DevOps"
+            )
+
+        results = self.git_client.update_refs(
+            [
+                GitRefUpdate(
+                    name=f"refs/heads/{branch_name}",
+                    old_object_id=ADO_ZERO_OID,
+                    new_object_id=source_sha,
+                )
+            ],
+            self.id,
+            project=self.project_id,
+        )
+        result = results[0] if results else None
+        if result is not None and getattr(result, "success", True) is False:
+            raise ADOApiNotFoundError(
+                getattr(result, "custom_message", None)
+                or f"Could not create branch {branch_name} on Azure DevOps"
+            )
+        return ADOBranch(self, branch_name)
+
+    def push_file(
+        self,
+        file_path: str,
+        content: str,
+        branch: Optional[str] = None,
+        comment: str = "",
+        create_branch_from: Optional[str] = None,
+    ) -> None:
+        """Creates or replaces a file on a branch via the Git Pushes API."""
+        branch_name = sanitize_path_name(branch or self.default_branch)
+        ado_path = file_path if file_path.startswith("/") else f"/{file_path}"
+
+        try:
+            head = ADOBranch(self, branch_name)
+            old_object_id = head.commit_id
+        except ADOApiNotFoundError:
+            if create_branch_from is None:
+                raise
+            created = self.create_branch(
+                branch_name, source_branch=create_branch_from or self.default_branch
+            )
+            old_object_id = created.commit_id
+        if not old_object_id:
+            raise ADOApiNotFoundError(
+                f"Could not find commit for branch {branch_name} on Azure DevOps"
+            )
+
+        change_type = "add"
+        try:
+            self.file_contents(ado_path, ref=branch_name)
+            change_type = "edit"
+        except (ADOApiNotFoundError, AzureDevOpsServiceError):
+            change_type = "add"
+
+        push = GitPush(
+            ref_updates=[
+                GitRefUpdate(
+                    name=f"refs/heads/{branch_name}",
+                    old_object_id=old_object_id,
+                )
+            ],
+            commits=[
+                GitCommitRef(
+                    comment=comment or f"Update {ado_path}",
+                    changes=[
+                        Change(
+                            change_type=change_type,
+                            item=GitItem(path=ado_path),
+                            new_content=ItemContent(
+                                content=content, content_type="rawtext"
+                            ),
+                        )
+                    ],
+                )
+            ],
+        )
+        try:
+            self.git_client.create_push(push, self.id, project=self.project_id)
+        except AzureDevOpsServiceError as e:
+            raise ADOApiNotFoundError(
+                f"Could not publish {ado_path} to {branch_name}: {str(e)}"
+            )
+
+    def merge_package_description_fields(self, tag_name: str, extra: dict) -> dict:
+        """Merges fields into the package version description JSON and returns it.
+
+        Azure Artifacts does not expose a description-update API after publish.
+        The merged JSON is stored on the in-memory package version so callers
+        can log it; the markdown file in git is the durable record.
+        """
+        version, _ = self.get_version_package(tag_name)
+        raw = ""
+        if version:
+            raw = version.package_description or version.description or ""
+        data: dict = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {"tag_name": tag_name}
+        if "tag_name" not in data:
+            data["tag_name"] = tag_name
+        data.update(extra)
+        merged = json.dumps(data)
+        if version:
+            version.package_description = merged
+        self.logger.info(
+            f"Package description for {tag_name} now includes: {sorted(data.keys())}"
+        )
+        return data
 
     def get_latest_artifact(self, prerelease: bool = False) -> Optional[ADORelease]:
         pkg = self.get_package()
